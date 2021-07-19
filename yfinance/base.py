@@ -63,6 +63,11 @@ class TickerBase():
         self._earnings = {
             "yearly": utils.empty_df(),
             "quarterly": utils.empty_df()}
+        self._eps = {
+            "quarterly": utils.empty_df()}
+        self._trends = {
+            "eps": utils.empty_df(),
+            "revenue": utils.empty_df()}
         self._financials = {
             "yearly": utils.empty_df(),
             "quarterly": utils.empty_df()}
@@ -337,7 +342,7 @@ class TickerBase():
             if isinstance(data.get(item), dict):
                 self._info.update(data[item])
 
-        self._info['regularMarketPrice'] = self._info['regularMarketOpen']
+        self._info['regularMarketPrice'] = self._info.get('regularMarketOpen')
         self._info['logo_url'] = ""
         try:
             domain = self._info['website'].split(
@@ -393,15 +398,59 @@ class TickerBase():
         # earnings
         if isinstance(data.get('earnings'), dict):
             earnings = data['earnings']['financialsChart']
-            df = _pd.DataFrame(earnings['yearly']).set_index('date')
-            df.columns = utils.camel2title(df.columns)
-            df.index.name = 'Year'
-            self._earnings['yearly'] = df
+            if isinstance(earnings.get('yearly'), dict) or isinstance(earnings.get('yearly'), list):
+                df = _pd.DataFrame(earnings['yearly']).set_index('date')
+                df.columns = utils.camel2title(df.columns)
+                df.index.name = 'Year'
+                self._earnings['yearly'] = df
 
-            df = _pd.DataFrame(earnings['quarterly']).set_index('date')
-            df.columns = utils.camel2title(df.columns)
-            df.index.name = 'Quarter'
-            self._earnings['quarterly'] = df
+            if isinstance(earnings.get('quarterly'), dict) or isinstance(earnings.get('quarterly'), list):
+                df = _pd.DataFrame(earnings['quarterly']).set_index('date')
+                df.columns = utils.camel2title(df.columns)
+                df.index.name = 'Quarter'
+                self._earnings['quarterly'] = df
+
+            # EPS history
+            eps = data['earnings']['earningsChart']
+            if isinstance(eps.get('quarterly'), dict) or isinstance(eps.get('quarterly'), list):
+                df = _pd.DataFrame(eps['quarterly']).set_index('date')
+                df.columns = utils.camel2title(df.columns)
+                self._eps['quarterly'] = df
+                self._eps['estimate'] = _pd.DataFrame([{
+                        'date': f'{eps["currentQuarterEstimateDate"]}{eps["currentQuarterEstimateYear"]}',
+                        'estimate': eps["currentQuarterEstimate"]
+                    }])
+
+
+        # get analysis
+        data = utils.get_json(ticker_url+'/analysis', proxy)
+        if isinstance(data.get('earningsTrend'), dict):
+            epsTrend = _pd.DataFrame(
+                {
+                    'period': x['period'],
+                    'endDate': x['endDate'],
+                    'avg': x['earningsEstimate']['avg'],
+                    'low': x['earningsEstimate']['low'],
+                    'high': x['earningsEstimate']['high'],
+                    'yearAgo': x['earningsEstimate']['yearAgoEps'],
+                    'numberOfAnalysts': x['earningsEstimate']['numberOfAnalysts'],
+                    'growth': x['earningsEstimate']['growth'],
+                }
+                for x in data['earningsTrend']['trend']).set_index('period')
+            revenueTrend = _pd.DataFrame(
+                {
+                    'period': x['period'],
+                    'endDate': x['endDate'],
+                    'avg': x['revenueEstimate']['avg'],
+                    'low': x['revenueEstimate']['low'],
+                    'high': x['revenueEstimate']['high'],
+                    'yearAgo': x['revenueEstimate']['yearAgoRevenue'],
+                    'numberOfAnalysts': x['revenueEstimate']['numberOfAnalysts'],
+                    'growth': x['revenueEstimate']['growth'],
+                }
+                for x in data['earningsTrend']['trend']).set_index('period')
+            self._trends['eps'] = epsTrend
+            self._trends['revenue'] = revenueTrend
 
         self._fundamentals = True
 
@@ -462,6 +511,20 @@ class TickerBase():
         if as_dict:
             return data.to_dict()
         return data
+
+    def get_eps(self, proxy=None, as_dict=False, freq="quarterly"):
+        self._get_fundamentals(proxy=proxy)
+        data = self._eps[freq]
+        if as_dict:
+            return data.to_dict()
+        return data
+
+    def get_trends(self, proxy=None, as_dict=False, *args, **kwargs):
+        self._get_fundamentals(proxy=proxy)
+        epsTrend, revenueTrend = self._trends['eps'], self._trends['revenue']
+        if as_dict:
+            return epsTrend.to_dict(), revenueTrend.to_dict()
+        return epsTrend, revenueTrend
 
     def get_financials(self, proxy=None, as_dict=False, freq="yearly"):
         self._get_fundamentals(proxy=proxy)
